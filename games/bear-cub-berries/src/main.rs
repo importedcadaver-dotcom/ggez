@@ -140,6 +140,53 @@ const BEE_WING: Color = Color::new(0.90, 0.96, 1.0, 0.55);
 // Small structures.
 // *********************************************************************
 
+/// How strong one pick of a boon is. Rarity is extra stacks, so every existing
+/// `count()` call site gets stronger for free: the Hades trick without any new
+/// content, and integer boons gain whole points instead of fractions.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Rarity {
+    Common,
+    Rare,
+    Epic,
+}
+
+impl Rarity {
+    fn stacks(self) -> usize {
+        match self {
+            Rarity::Common => 1,
+            Rarity::Rare => 2,
+            Rarity::Epic => 3,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Rarity::Common => "common",
+            Rarity::Rare => "rare",
+            Rarity::Epic => "epic",
+        }
+    }
+
+    /// Rarity is read by colour alone, the way Hades does it: no new art.
+    fn color(self) -> Color {
+        match self {
+            Rarity::Common => CREAM,
+            Rarity::Rare => Color::new(0.55, 0.78, 1.0, 1.0),
+            Rarity::Epic => Color::new(0.82, 0.58, 1.0, 1.0),
+        }
+    }
+}
+
+/// How many stacks of `boon` a run holds. Rarity is the whole point: one epic
+/// pick is worth three commons, so the same boon can carry a run.
+fn total_stacks(boons: &[(Boon, Rarity)], boon: Boon) -> usize {
+    boons
+        .iter()
+        .filter(|(b, _)| *b == boon)
+        .map(|(_, r)| r.stacks())
+        .sum()
+}
+
 /// What you can carry back to the den.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Food {
@@ -553,79 +600,124 @@ fn draw_bear(
 // The other animals, and the props.
 // *********************************************************************
 
+/// A sprite drawn from a grid of characters, one block per art pixel. Crisp by
+/// construction: no curves, no anti-aliasing, and every enemy shares the grid so
+/// they cannot drift apart in pixel size.
+fn build_pixels(
+    ctx: &mut Context,
+    rows: &[&str],
+    key: &[(char, Color)],
+    px: f32,
+) -> GameResult<Mesh> {
+    let mut b = MeshBuilder::new();
+    let h = rows.len() as f32;
+    let w = rows.iter().map(|r| r.chars().count()).max().unwrap_or(0) as f32;
+    for (y, row) in rows.iter().enumerate() {
+        for (x, ch) in row.chars().enumerate() {
+            let Some((_, color)) = key.iter().find(|(k, _)| *k == ch) else {
+                continue;
+            };
+            b.rectangle(
+                DrawMode::fill(),
+                Rect::new(
+                    x as f32 * px - w * px * 0.5,
+                    y as f32 * px - h * px * 0.5,
+                    px,
+                    px,
+                ),
+                *color,
+            )?;
+        }
+    }
+    Ok(Mesh::from_data(ctx, b.build()))
+}
+
+/// A badger, low and wide, with the pale face and black stripes that make it read
+/// as a badger at a glance. Same 2 px grid as the bears' art.
 fn build_badger(ctx: &mut Context) -> GameResult<Mesh> {
-    let mut b = MeshBuilder::new();
-    // Legs first so the body covers their tops.
-    for x in [-16.0_f32, -6.0, 8.0, 18.0] {
-        b.ellipse(DrawMode::fill(), [x, 11.0], 4.6, 6.0, 0.1, BADGER_DARK)?;
-    }
-    // Body.
-    b.ellipse(DrawMode::fill(), [0.0, 0.0], 25.0, 14.0, 0.1, BADGER_GREY)?;
-    b.ellipse(DrawMode::fill(), [2.0, 5.0], 17.0, 8.0, 0.1, BADGER_PALE)?;
-    b.circle(DrawMode::fill(), [-24.0, -4.0], 4.5, 0.1, BADGER_PALE)?;
-    // Head, low and wide, with the classic stripes.
-    b.circle(DrawMode::fill(), [23.0, -5.0], 11.5, 0.1, BADGER_GREY)?;
-    b.ellipse(DrawMode::fill(), [33.0, -2.0], 5.5, 4.2, 0.1, BADGER_PALE)?;
-    b.circle(DrawMode::fill(), [37.0, -3.0], 2.2, 0.1, BADGER_DARK)?;
-    b.ellipse(DrawMode::fill(), [19.0, -8.0], 3.2, 7.5, 0.1, BADGER_DARK)?;
-    b.ellipse(DrawMode::fill(), [28.0, -8.5], 3.0, 7.0, 0.1, BADGER_DARK)?;
-    b.ellipse(DrawMode::fill(), [24.0, -9.5], 1.9, 6.0, 0.1, BADGER_PALE)?;
-    b.circle(DrawMode::fill(), [16.0, -17.0], 3.6, 0.1, BADGER_DARK)?;
-    b.circle(DrawMode::fill(), [26.0, -17.5], 3.6, 0.1, BADGER_DARK)?;
-    // Eyes.
-    b.circle(DrawMode::fill(), [20.0, -6.0], 1.7, 0.1, INK)?;
-    b.circle(DrawMode::fill(), [28.0, -6.4], 1.7, 0.1, INK)?;
-    Ok(Mesh::from_data(ctx, b.build()))
+    const ROWS: [&str; 14] = [
+        ".....ddddddddd..........",
+        "...ddmmmmmmmmdd.........",
+        "..dmmmmmmmmmmmmdd.......",
+        ".dmmmmmmmmmmmmmmmdd.....",
+        ".dmmmmmmmmmmmmmmmmmdd...",
+        ".dmmmmmmmmmmmmmppppppd..",
+        ".dmmmmmmmmmmmmmppppppd..",
+        ".dmmmmmmmmmmmmpeppppppd.",
+        ".dmmmmmmmmmmmmpppppppd..",
+        ".dppmmmmmmmmmmmpppppd...",
+        ".dpppmmmmmmmmmpppppd....",
+        "..dddddddddddddddddd....",
+        "..dd...dd...dd...dd.....",
+        "..dd...dd...dd...dd.....",
+    ];
+    build_pixels(
+        ctx,
+        &ROWS,
+        &[
+            ('d', BADGER_DARK),
+            ('m', BADGER_GREY),
+            ('p', BADGER_PALE),
+            ('e', INK),
+        ],
+        2.0,
+    )
 }
 
+/// A boar: heavy hump, bristly spine, tusks forward. It leans and spikes where
+/// the badger sits flat, so the two never read as the same animal.
 fn build_boar(ctx: &mut Context) -> GameResult<Mesh> {
-    let mut b = MeshBuilder::new();
-    for x in [-14.0_f32, -4.0, 10.0, 20.0] {
-        b.ellipse(DrawMode::fill(), [x, 12.0], 4.2, 5.4, 0.1, BOAR_MANE)?;
-    }
-    // Heavy body.
-    b.ellipse(DrawMode::fill(), [0.0, -1.0], 26.0, 16.0, 0.1, BOAR_HIDE)?;
-    b.ellipse(DrawMode::fill(), [2.0, 5.0], 18.0, 8.0, 0.1, BOAR_LIGHT)?;
-    // Bristly mane along the spine.
-    for i in 0..6 {
-        let x = -14.0 + i as f32 * 5.2;
-        let tip = -20.0 - (i as f32 * 1.4).sin() * 3.0;
-        b.polygon(
-            DrawMode::fill(),
-            &[[x - 2.6, -13.0], [x, tip], [x + 2.6, -13.0]],
-            BOAR_MANE,
-        )?;
-    }
-    // Head with snout and tusks.
-    b.circle(DrawMode::fill(), [23.0, 0.0], 12.0, 0.1, BOAR_HIDE)?;
-    b.ellipse(DrawMode::fill(), [34.0, 3.0], 6.0, 4.8, 0.1, BOAR_LIGHT)?;
-    b.circle(DrawMode::fill(), [37.0, 2.0], 1.8, 0.1, BOAR_MANE)?;
-    b.ellipse(DrawMode::fill(), [25.0, -12.0], 3.2, 3.0, 0.1, BOAR_MANE)?;
-    // Tusks.
-    b.line(&[[31.0, 6.0], [34.0, 1.0]], 2.6, CREAM)?;
-    b.line(&[[28.0, 7.0], [30.5, 2.0]], 2.0, CREAM)?;
-    b.circle(DrawMode::fill(), [22.0, -2.0], 1.8, 0.1, INK)?;
-    b.circle(DrawMode::fill(), [29.0, -2.4], 1.7, 0.1, INK)?;
-    Ok(Mesh::from_data(ctx, b.build()))
+    const ROWS: [&str; 15] = [
+        "....m..m.m..m...........",
+        "...mmmmmmmmmmmmm........",
+        "..mhhhhhhhhhhhhhmm......",
+        ".mhhhhhhhhhhhhhhhhmm....",
+        ".mhhhhhhhhhhhhhhhhhhmm..",
+        ".mhhllllllllhhhhhhhhhhm.",
+        ".mhhllllllllllhhhhhhhhm.",
+        ".mhhllllllllllhhhhllllm.",
+        ".mhhlllllllllhhhhllllllm",
+        "..mhhhhhhhhhhhhhhllwwm..",
+        "..mhhhhhhhhhhhhhhhwm....",
+        "...mmmmmmmmmmmmmmm......",
+        "...mm..mm...mm...mm.....",
+        "...mm..mm...mm...mm.....",
+        "........................",
+    ];
+    build_pixels(
+        ctx,
+        &ROWS,
+        &[
+            ('m', BOAR_MANE),
+            ('h', BOAR_HIDE),
+            ('l', BOAR_LIGHT),
+            ('w', CREAM),
+            ('e', INK),
+        ],
+        2.0,
+    )
 }
 
+/// A bee: stripes and wings only, because at this size anything else is noise.
 fn build_bee(ctx: &mut Context) -> GameResult<Mesh> {
-    let mut b = MeshBuilder::new();
-    // Wings.
-    b.ellipse(DrawMode::fill(), [-2.0, -6.0], 6.0, 3.6, 0.2, BEE_WING)?;
-    b.ellipse(DrawMode::fill(), [3.0, -6.6], 5.2, 3.2, 0.2, BEE_WING)?;
-    // Body.
-    b.ellipse(DrawMode::fill(), [0.0, 0.0], 7.0, 5.0, 0.1, BEE_BODY)?;
-    b.ellipse(DrawMode::fill(), [-1.0, 0.0], 1.6, 4.8, 0.1, BEE_STRIPE)?;
-    b.ellipse(DrawMode::fill(), [3.4, 0.0], 1.5, 4.4, 0.1, BEE_STRIPE)?;
-    // Head and stinger.
-    b.circle(DrawMode::fill(), [-7.0, -0.5], 3.4, 0.1, BEE_STRIPE)?;
-    b.polygon(
-        DrawMode::fill(),
-        &[[7.0, -1.2], [10.5, 0.0], [7.0, 1.2]],
-        BEE_STRIPE,
-    )?;
-    Ok(Mesh::from_data(ctx, b.build()))
+    const ROWS: [&str; 10] = [
+        "....ww...ww...",
+        "...wwww..wwww.",
+        "....yyyyyyy...",
+        "...ykyyykyy...",
+        "..ykyyykyyky..",
+        "..ykyyykyyky..",
+        "...ykyyykyyy..",
+        "....yyyyyyy...",
+        ".....kkkk.....",
+        "......kk......",
+    ];
+    build_pixels(
+        ctx,
+        &ROWS,
+        &[('w', BEE_WING), ('y', BEE_BODY), ('k', BEE_STRIPE)],
+        2.0,
+    )
 }
 
 fn build_hive(ctx: &mut Context) -> GameResult<Mesh> {
@@ -1033,8 +1125,10 @@ struct Game {
     best_day: u32,
     runs: u32,
     over_reason: String,
-    boons: Vec<Boon>,
+    boons: Vec<(Boon, Rarity)>,
     offers: Vec<Boon>,
+    /// Rarity of each offer, parallel to `offers`.
+    offer_rarity: Vec<Rarity>,
 
     // Player.
     cub: Vec2,
@@ -1167,6 +1261,7 @@ impl Game {
             over_reason: String::new(),
             boons: Vec::new(),
             offers: Vec::new(),
+            offer_rarity: Vec::new(),
             cub: Vec2::ZERO,
             cub_vel: Vec2::ZERO,
             facing: 1.0,
@@ -1414,8 +1509,9 @@ impl Game {
 
     // ---- Boons ----------------------------------------------------
 
+    /// Stacks of one boon, rarity included: a rare pick counts twice.
     fn count(&self, boon: Boon) -> usize {
-        self.boons.iter().filter(|b| **b == boon).count()
+        total_stacks(&self.boons, boon)
     }
 
     fn carry_limit(&self) -> usize {
@@ -1439,12 +1535,23 @@ impl Game {
     fn offer_boons(&mut self) {
         let mut pool: Vec<Boon> = Boon::ALL.to_vec();
         self.offers.clear();
+        self.offer_rarity.clear();
         for _ in 0..3 {
             if pool.is_empty() {
                 break;
             }
             let i = self.rng.rand_range(0..pool.len() as u32) as usize;
+            // Most offers are plain; the good ones are worth waiting for.
+            let roll = self.rng.rand_float();
+            let rarity = if roll > 0.90 {
+                Rarity::Epic
+            } else if roll > 0.62 {
+                Rarity::Rare
+            } else {
+                Rarity::Common
+            };
             self.offers.push(pool.remove(i));
+            self.offer_rarity.push(rarity);
         }
     }
 
@@ -1453,9 +1560,15 @@ impl Game {
             return;
         }
         let boon = self.offers[index];
-        self.boons.push(boon);
+        let rarity = self
+            .offer_rarity
+            .get(index)
+            .copied()
+            .unwrap_or(Rarity::Common);
+        self.boons.push((boon, rarity));
         self.sfx.request(SFX_CHOOSE);
         self.offers.clear();
+        self.offer_rarity.clear();
         self.day += 1;
         self.start_day();
         // The old badger gets a proper introduction.
@@ -2370,7 +2483,9 @@ impl Game {
         label.set_wrap(true);
         label.set_bounds(vec2(392.0, 108.0));
         let dims = label.measure(ctx)?;
-        label.set_bounds(vec2(dims.x + 1.0, dims.y + 1.0));
+        // Deliberately NOT re-bounding to `dims`: measuring returns the widest
+        // line, and wrapping again at that width fits one more word on it, which
+        // pushes the text past the plate. Measured box, fixed wrap width.
         let name_h = if who.is_empty() { 0.0 } else { 16.0 };
         let w = dims.x + 22.0;
         let h = dims.y + 16.0 + name_h;
@@ -2462,10 +2577,11 @@ impl Game {
         // List of what the run has given you so far.
         if !self.boons.is_empty() {
             let mut counts: Vec<(Boon, usize)> = Vec::new();
-            for boon in &self.boons {
+            // Rarity shows up as stacks, so a rare pick reads as x2.
+            for (boon, rarity) in &self.boons {
                 match counts.iter_mut().find(|(b, _)| b == boon) {
-                    Some((_, n)) => *n += 1,
-                    None => counts.push((*boon, 1)),
+                    Some((_, n)) => *n += rarity.stacks(),
+                    None => counts.push((*boon, rarity.stacks())),
                 }
             }
             let text: Vec<String> = counts
@@ -2535,6 +2651,7 @@ impl Game {
         let top = 210.0;
 
         for (i, boon) in self.offers.iter().enumerate() {
+            let rarity = self.offer_rarity.get(i).copied().unwrap_or(Rarity::Common);
             let x = left + i as f32 * (card_w + gap);
             let rect = Rect::new(x, top, card_w, card_h);
             canvas.draw(
@@ -2547,7 +2664,7 @@ impl Game {
                 &graphics::Quad,
                 DrawParam::new()
                     .dest_rect(Rect::new(x, top, card_w, 5.0))
-                    .color(HONEY),
+                    .color(rarity.color()),
             );
             draw_label(
                 canvas,
@@ -2556,7 +2673,20 @@ impl Game {
                 HONEY,
                 vec2(x + 18.0, top + 18.0),
             )?;
-            draw_label(canvas, boon.name(), 24.0, CREAM, vec2(x + 18.0, top + 52.0))?;
+            draw_label(
+                canvas,
+                boon.name(),
+                24.0,
+                rarity.color(),
+                vec2(x + 18.0, top + 52.0),
+            )?;
+            draw_label(
+                canvas,
+                rarity.label(),
+                11.0,
+                Color::new(rarity.color().r, rarity.color().g, rarity.color().b, 0.7),
+                vec2(x + 18.0, top + 72.0),
+            )?;
 
             let mut blurb = make_label(boon.blurb(), 14.0);
             blurb.set_wrap(true);
@@ -2878,6 +3008,19 @@ impl Game {
         }
         if self.cub.distance(self.den_center()) > DEN_REACH + 46.0 {
             self.toast_line("Mama is by the den. Go to her.");
+            return;
+        }
+        // Comfort is refused while the den is still half empty. The button is a
+        // relationship, not a bond dispenser: read the room first.
+        if self.stored * 2 < self.quota {
+            self.cuddle_cd = 1.2;
+            self.toast_line("Mama is watching the empty store.");
+            self.say(
+                self.den_center() + vec2(-104.0, -78.0),
+                "Later, little one. Not while the den is this empty.",
+                CREAM,
+                2.6,
+            );
             return;
         }
         self.cuddle_cd = 2.2;
@@ -3723,6 +3866,19 @@ mod balance {
             t += dt;
         }
         None
+    }
+
+    #[test]
+    fn rarity_is_worth_stacks() {
+        assert_eq!(Rarity::Common.stacks(), 1);
+        assert_eq!(Rarity::Rare.stacks(), 2);
+        assert_eq!(Rarity::Epic.stacks(), 3);
+        let held = [
+            (Boon::BiggerPaws, Rarity::Common),
+            (Boon::BiggerPaws, Rarity::Rare),
+        ];
+        assert_eq!(total_stacks(&held, Boon::BiggerPaws), 3);
+        assert_eq!(total_stacks(&held, Boon::FleetPaws), 0);
     }
 
     #[test]
