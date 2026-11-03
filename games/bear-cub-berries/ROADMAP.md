@@ -13,7 +13,11 @@ they are to build.
 * **State of build:** `cargo build -p bear-cub-berries` is clean, zero warnings,
   `rustfmt` clean.
 * **Assets:** ~500 KB total (sprites, nine WAVs, one font). All local, no network.
-* **Tests:** none. Everything verified so far was verified by screenshotting a
+* **Tests:** one, and it is the useful one. `cargo test -p bear-cub-berries` runs
+  a headless model of the day economy: same constants, same spawn cadence, a cub
+  with perfect routing. It asserts every day is clearable with room left over and
+  that the last day is not trivial. Everything visual is still verified by
+  screenshotting a
   running window and posting synthetic key events to it.
 
 ## What the audit pass changed
@@ -116,7 +120,8 @@ enemies, game, helpers) and the sections hold up fine. What does not hold up:
 9. **Enemy sprite pass.** The bears are pixel art and the badger/boar/bees are
    smooth vector shapes. Either draw pixel enemies to match (best) or deliberately
    restyle the bears' vector fallback rigs and use those everywhere (cheapest).
-10. **Balance pass with a real player.** Day 10 asks for 24 food in ~61 seconds.
+
+    That is only possible via honey (worth 2) and hive regrowth. It has never been
     That is only possible via honey (worth 2) and hive regrowth. It has never been
     played end to end; treat `WIN_DAY`, `BOSS_DAY`, boss HP and the quota step as
     unvalidated numbers.

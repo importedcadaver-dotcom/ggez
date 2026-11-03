@@ -44,8 +44,9 @@ const WINDOW_SIZE: (f32, f32) = (1024.0, 680.0);
 const DAY_ONE_SECONDS: f32 = 88.0;
 /// A day can never get shorter than this, no matter how far the run goes.
 const MIN_DAY_SECONDS: f32 = 48.0;
-/// Food units the den needs on day one.
-const FIRST_QUOTA: u32 = 6;
+/// Food units the den needs on day one. Measured, not guessed: at 6 the day
+/// ended before Mama finished her opening line.
+const FIRST_QUOTA: u32 = 10;
 /// Clear this many days and the family gets its long sleep.
 const WIN_DAY: u32 = 10;
 /// The old badger comes to settle things on this day.
@@ -55,8 +56,9 @@ const SWIPE_CD: f32 = 0.40;
 const SWIPE_RANGE: f32 = 66.0;
 /// Bond needed before a bear counts as family, properly.
 const CLOSE_BOND: f32 = 6.0;
-/// Each day asks for this much more food than the last.
-const QUOTA_STEP: u32 = 2;
+/// Food units the den needs on the last day. The model clears this in 22 s of
+/// the 61 s it is given, which is tight enough to bite once badgers are involved.
+const LAST_QUOTA: u32 = 24;
 
 const CARRY_BASE: usize = 3;
 const CUB_SPEED: f32 = 258.0;
@@ -65,6 +67,18 @@ const STUN_TIME: f32 = 1.0;
 const DEN_Y: f32 = 104.0;
 const DEN_REACH: f32 = 100.0;
 const BEE_HOME_RADIUS: f32 = 92.0;
+
+/// How long `day` lasts, before boons stretch the dusk.
+fn base_day_seconds(day: u32) -> f32 {
+    (DAY_ONE_SECONDS - (day - 1) as f32 * 3.0).max(MIN_DAY_SECONDS)
+}
+
+/// Food `day` asks for, spread evenly from the first day to the last.
+fn quota_for_day(day: u32) -> u32 {
+    let day = day.clamp(1, WIN_DAY);
+    let t = (day - 1) as f32 / (WIN_DAY - 1) as f32;
+    FIRST_QUOTA + ((LAST_QUOTA - FIRST_QUOTA) as f32 * t).round() as u32
+}
 
 // *********************************************************************
 // Palette. Bears are warm brown, honey is gold, and dusk is orange.
@@ -1224,10 +1238,9 @@ impl Game {
     }
 
     fn start_day(&mut self) {
-        self.day_len = (DAY_ONE_SECONDS - (self.day - 1) as f32 * 3.0).max(MIN_DAY_SECONDS)
-            + 8.0 * self.count(Boon::LongDusk) as f32;
+        self.day_len = base_day_seconds(self.day) + 8.0 * self.count(Boon::LongDusk) as f32;
         self.day_time = self.day_len;
-        self.quota = FIRST_QUOTA + (self.day - 1) * QUOTA_STEP;
+        self.quota = quota_for_day(self.day);
         self.stored = self.count(Boon::MamasBlessing) as u32;
         self.phase = Phase::Playing;
         self.won = false;
@@ -3591,4 +3604,169 @@ fn main() -> GameResult {
 
     let state = Game::new(&mut ctx)?;
     event::run(ctx, event_loop, state)
+}
+
+// *********************************************************************
+// Balance.
+// *********************************************************************
+
+/// A model of the day economy, so a tuning change can be checked without a
+/// window. This is deliberately not the game loop: it is the same constants,
+/// the same spawn cadence, and a cub that always knows where the nearest berry
+/// is — that is, a player having a very good day. If a quota is out of reach
+/// even here, it is out of reach for anybody.
+#[cfg(test)]
+mod balance {
+    use super::*;
+
+    /// Where berries may appear, matching `spawn_berry`.
+    const FIELD_MARGIN: f32 = 70.0;
+    /// How close the cub must be to scoop something up.
+    const BOT_REACH: f32 = 40.0;
+    /// Berries the field holds at once, matching the spawn cap.
+    const FIELD_CAP: usize = 7;
+    /// Seconds between berry respawns, matching the spawn gap.
+    const SPAWN_GAP: f32 = 0.75;
+    /// How much of a day the model is allowed to spend before it counts as
+    /// "leaves no room to fight". A bot with perfect routing should not need
+    /// more than this, or a real player never clears the day.
+    const MAX_DAY_SHARE: f32 = 0.85;
+
+    fn day_len(day: u32) -> f32 {
+        base_day_seconds(day)
+    }
+
+    fn quota(day: u32) -> u32 {
+        quota_for_day(day)
+    }
+
+    fn field_point(rng: &mut Rand32) -> Vec2 {
+        vec2(
+            FIELD_MARGIN + rng.rand_float() * (WINDOW_SIZE.0 - FIELD_MARGIN * 2.0),
+            DEN_Y + 150.0 + rng.rand_float() * (WINDOW_SIZE.1 - DEN_Y - 150.0 - FIELD_MARGIN),
+        )
+    }
+
+    fn nearest(pickups: &[Vec2], from: Vec2) -> Option<Vec2> {
+        pickups
+            .iter()
+            .copied()
+            .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
+    }
+
+    /// Seconds until the bot stores `quota` units, or `None` if dusk comes first.
+    fn play_day(day: u32, seed: u64) -> Option<f32> {
+        let mut rng = Rand32::new(seed);
+        let den = vec2(WINDOW_SIZE.0 * 0.5, DEN_Y);
+        // The lip of the mound: the closest a cub can get to the den centre.
+        let lip = vec2(den.x, DEN_Y + 64.0);
+        let mut cub = vec2(den.x, DEN_Y + 168.0);
+        let mut pickups: Vec<Vec2> = (0..5).map(|_| field_point(&mut rng)).collect();
+
+        let dt = 1.0 / 60.0;
+        let limit = day_len(day);
+        let need = quota(day);
+        let mut stored = 0u32;
+        let mut carrying = 0usize;
+        let mut spawn = 0.0f32;
+        let mut t = 0.0f32;
+
+        while t < limit {
+            spawn -= dt;
+            if spawn <= 0.0 {
+                if pickups.len() < FIELD_CAP {
+                    pickups.push(field_point(&mut rng));
+                }
+                spawn = SPAWN_GAP;
+            }
+
+            // Full paws (or an empty field while loaded) means walk home.
+            let home = carrying >= CARRY_BASE || (pickups.is_empty() && carrying > 0);
+            let goal = if home {
+                lip
+            } else if let Some(next) = nearest(&pickups, cub) {
+                next
+            } else {
+                // Nothing to chase yet; the den is where the next trip starts.
+                t += dt;
+                continue;
+            };
+
+            let to_goal = goal - cub;
+            let step = CUB_SPEED * dt;
+            cub = if to_goal.length() <= step {
+                goal
+            } else {
+                cub + to_goal.normalize() * step
+            };
+
+            if carrying < CARRY_BASE {
+                let mut i = 0;
+                while i < pickups.len() && carrying < CARRY_BASE {
+                    if pickups[i].distance(cub) < BOT_REACH {
+                        pickups.remove(i);
+                        carrying += 1;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+
+            if carrying > 0 && cub.distance(den) < DEN_REACH {
+                stored += carrying as u32;
+                carrying = 0;
+                if stored >= need {
+                    return Some(t);
+                }
+            }
+
+            t += dt;
+        }
+        None
+    }
+
+    #[test]
+    fn every_day_can_be_cleared_with_time_left_to_fight() {
+        let mut report = String::new();
+        for day in 1..=WIN_DAY {
+            let mut best = f32::INFINITY;
+            for seed in [1_u64, 7, 13, 29] {
+                if let Some(t) = play_day(day, seed) {
+                    best = best.min(t);
+                }
+            }
+            assert!(
+                best.is_finite(),
+                "day {day}: {} food is unreachable in {:.0}s even with perfect routing",
+                quota(day),
+                day_len(day)
+            );
+            let share = best / day_len(day);
+            report.push_str(&format!(
+                "day {day:2}: needs {:2} food in {:4.0}s, model clears it at {:5.1}s ({:3.0}% of the day)\n",
+                quota(day),
+                day_len(day),
+                best,
+                share * 100.0
+            ));
+            // The last day has to actually bite, or the run has no finale.
+            if day == WIN_DAY {
+                assert!(
+                    share > 0.25,
+                    "the last day is trivially easy: {} food cleared in {:.1}s of {:.0}s",
+                    quota(day),
+                    best,
+                    day_len(day)
+                );
+            }
+            assert!(
+                share < MAX_DAY_SHARE,
+                "day {day} leaves no room for badgers: {} food took {:.1}s of {:.0}s",
+                quota(day),
+                best,
+                day_len(day)
+            );
+        }
+        println!("{report}");
+    }
 }
