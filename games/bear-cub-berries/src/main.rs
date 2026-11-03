@@ -1183,6 +1183,8 @@ struct Game {
     swipe_anim: f32,
     toast: Option<(String, f32)>,
     debug: bool,
+    /// F2: the cheat sheet, for QA and for fun.
+    cheat_menu: bool,
     cheat_buf: String,
     adam: bool,
     title_page: u8,
@@ -1303,6 +1305,7 @@ impl Game {
             swipe_anim: 0.0,
             toast: None,
             debug: false,
+            cheat_menu: false,
             cheat_buf: String::new(),
             adam: false,
             title_page: 0,
@@ -1359,6 +1362,11 @@ impl Game {
         self.hurt_flash = 0.0;
 
         self.build_meadow();
+
+        // Nobody lands a hit before the player has had a moment to look around.
+        for foe in &mut self.foes {
+            foe.cooldown = foe.cooldown.max(1.8);
+        }
 
         let aside = self.day_intro();
         self.say_from(
@@ -1693,8 +1701,10 @@ impl Game {
 
         match self.phase {
             Phase::Playing => {
-                let dir = self.read_input(ctx);
-                self.update_day(dt, dir);
+                if !self.cheat_menu {
+                    let dir = self.read_input(ctx);
+                    self.update_day(dt, dir);
+                }
             }
             Phase::Title | Phase::Cutscene | Phase::Choosing | Phase::RunOver => {}
         }
@@ -2457,13 +2467,151 @@ impl Game {
 
         match self.phase {
             Phase::Playing => {}
-            Phase::Choosing => self.draw_boon_screen(&mut canvas, ctx)?,
+            Phase::Choosing => {
+                self.draw_boon_screen(&mut canvas, ctx)?;
+                self.draw_recap(&mut canvas, ctx)?;
+            }
             Phase::RunOver => self.draw_over_screen(&mut canvas, ctx)?,
             Phase::Title => self.draw_title(&mut canvas, ctx)?,
             Phase::Cutscene => self.draw_cutscene(&mut canvas, ctx)?,
         }
 
+        self.draw_cheat_menu(&mut canvas, ctx)?;
+
         canvas.finish(ctx)?;
+        Ok(())
+    }
+
+    /// The between-days receipt: what the day cost, what it paid, and what is
+    /// coming. Stardew's shipment screen, sized for a ten-minute run.
+    fn draw_recap(&self, canvas: &mut graphics::Canvas, _ctx: &Context) -> GameResult {
+        let size = self.size;
+        let left = 96.0;
+        let top = size.y - 190.0;
+        draw_label(
+            canvas,
+            &format!(
+                "day {} cleared   ·   {} in the store ({} needed)   ·   {} gathered this run",
+                self.day, self.stored, self.quota, self.total_food
+            ),
+            15.0,
+            CREAM,
+            vec2(left, top),
+        )?;
+        draw_label(
+            canvas,
+            &format!(
+                "mama {:.1}   ·   pip {:.1}   ·   {}",
+                self.bond_mama,
+                self.bond_pip,
+                if self.bond_mama >= CLOSE_BOND {
+                    "she would carry you if she could"
+                } else {
+                    "still watching from the mouth of the den"
+                }
+            ),
+            13.0,
+            Color::new(0.95, 0.92, 0.84, 0.7),
+            vec2(left, top + 24.0),
+        )?;
+        draw_label(
+            canvas,
+            &format!(
+                "tomorrow: {} food, {} seconds of dusk",
+                quota_for_day(self.day + 1),
+                base_day_seconds(self.day + 1) as u32
+            ),
+            13.0,
+            HONEY_LIGHT,
+            vec2(left, top + 46.0),
+        )?;
+
+        // One line of prose, because that is where the cozy lives.
+        let aside = if self.injury > 0 {
+            "You come in limping. Mama pretends not to notice, and notices."
+        } else if self.bond_pip >= CLOSE_BOND {
+            "Pip falls asleep against your shoulder before the story is over."
+        } else {
+            "The den smells of berries and cold air. It is enough for tonight."
+        };
+        draw_label(
+            canvas,
+            aside,
+            14.0,
+            Color::new(0.96, 0.93, 0.86, 0.85),
+            vec2(left, top + 74.0),
+        )?;
+
+        // Ten dots, so the run is legible at a glance.
+        let mut x = left;
+        for d in 1..=WIN_DAY {
+            let on = d <= self.day;
+            let next = d == self.day + 1;
+            let side = if next { 5.0 } else { 4.0 };
+            canvas.draw(
+                &self.dot_mesh,
+                DrawParam::new()
+                    .dest(vec2(x, top + 108.0))
+                    .scale(vec2(side, side))
+                    .color(if on {
+                        HONEY_LIGHT
+                    } else {
+                        Color::new(0.95, 0.92, 0.85, 0.28)
+                    }),
+            );
+            x += 16.0;
+        }
+        Ok(())
+    }
+
+    /// F2's cheat sheet. Every entry is deliberately something the game already
+    /// knows how to do, so QA exercises the real paths instead of a mock.
+    fn draw_cheat_menu(&self, canvas: &mut graphics::Canvas, ctx: &Context) -> GameResult {
+        if !self.cheat_menu {
+            return Ok(());
+        }
+        let size = self.size;
+        canvas.draw(
+            &graphics::Quad,
+            DrawParam::new()
+                .dest_rect(Rect::new(0.0, 0.0, size.x, size.y))
+                .color(Color::new(0.02, 0.03, 0.02, 0.80)),
+        );
+        let w = 500.0;
+        let h = 316.0;
+        let x = (size.x - w) * 0.5;
+        let y = (size.y - h) * 0.5;
+        canvas.draw(
+            &graphics::Quad,
+            DrawParam::new()
+                .dest_rect(Rect::new(x, y, w, h))
+                .color(Color::new(0.10, 0.12, 0.09, 0.98)),
+        );
+        draw_centered_label(
+            canvas,
+            ctx,
+            "CHEAT SHEET",
+            24.0,
+            HONEY_LIGHT,
+            vec2(size.x * 0.5, y + 18.0),
+        )?;
+        for (i, (key, label)) in CHEATS.iter().enumerate() {
+            draw_label(
+                canvas,
+                &format!("{}   {}", key, label),
+                15.0,
+                CREAM,
+                vec2(x + 34.0, y + 64.0 + i as f32 * 30.0),
+            )?;
+        }
+        draw_centered_label(
+            canvas,
+            ctx,
+            "F2 to close   ·   typed words still work",
+            12.0,
+            Color::new(0.95, 0.92, 0.84, 0.55),
+            vec2(size.x * 0.5, y + h - 34.0),
+        )?;
         Ok(())
     }
 
@@ -3149,6 +3297,55 @@ impl Game {
 
     // ---- Cheats and easter eggs ------------------------------------
 
+    /// Runs one cheat-sheet entry. Every one goes through the game's own code:
+    /// the day clear is a real delivery at the den, not a mock.
+    fn cheat_run(&mut self, i: usize) {
+        self.cheat_menu = false;
+        match i {
+            0 => {
+                // Load up and step to the den; the delivery path takes it from here.
+                self.carried.clear();
+                for _ in 0..self.quota.max(1) {
+                    self.carried.push(Food::Berry);
+                }
+                self.cub = self.den_center() + vec2(0.0, 64.0);
+                self.toast_line("cheat: the den is full");
+            }
+            1 => {
+                self.day = BOSS_DAY;
+                self.start_day();
+                self.toast_line("cheat: the old badger is waiting");
+            }
+            2 => {
+                self.day = (self.day + 1).min(WIN_DAY);
+                self.start_day();
+                self.toast_line("cheat: next day");
+            }
+            3 => {
+                let boon = self.offers.first().copied().unwrap_or(Boon::FleetPaws);
+                self.boons.push((boon, Rarity::Epic));
+                self.toast_line("cheat: one epic boon");
+            }
+            4 => {
+                for k in 0..3 {
+                    let a = k as f32 * 1.2;
+                    self.pickups.push(Pickup {
+                        pos: self.cub + vec2(a.cos() * 54.0, a.sin() * 40.0),
+                        vel: Vec2::ZERO,
+                        kind: Food::Treat,
+                        wobble: 0.0,
+                    });
+                }
+                self.toast_line("cheat: treats at your paws");
+            }
+            5 => {
+                self.day_time = 6.0;
+                self.toast_line("cheat: dusk in six seconds");
+            }
+            _ => {}
+        }
+    }
+
     fn toast_line(&mut self, text: impl Into<String>) {
         self.toast = Some((text.into(), 2.6));
     }
@@ -3588,6 +3785,26 @@ impl EventHandler for Game {
             return Ok(());
         }
 
+        if input.event.physical_key == PhysicalKey::Code(KeyCode::F2) {
+            self.cheat_menu = !self.cheat_menu;
+            return Ok(());
+        }
+        if self.cheat_menu {
+            let pick = match input.event.physical_key {
+                PhysicalKey::Code(KeyCode::Digit1) => Some(0),
+                PhysicalKey::Code(KeyCode::Digit2) => Some(1),
+                PhysicalKey::Code(KeyCode::Digit3) => Some(2),
+                PhysicalKey::Code(KeyCode::Digit4) => Some(3),
+                PhysicalKey::Code(KeyCode::Digit5) => Some(4),
+                PhysicalKey::Code(KeyCode::Digit6) => Some(5),
+                _ => None,
+            };
+            if let Some(i) = pick {
+                self.cheat_run(i);
+                return Ok(());
+            }
+        }
+
         match self.phase {
             Phase::Choosing => {
                 let choice = match input.event.physical_key {
@@ -3748,6 +3965,16 @@ fn main() -> GameResult {
     let state = Game::new(&mut ctx)?;
     event::run(ctx, event_loop, state)
 }
+
+/// The cheat sheet, in the order `cheat_run` expects.
+const CHEATS: [(&str, &str); 6] = [
+    ("1", "clear the day  (opens the boon screen)"),
+    ("2", "the old badger  (day five, with boars and bees)"),
+    ("3", "next day"),
+    ("4", "one epic boon"),
+    ("5", "treats at your paws"),
+    ("6", "dusk in six seconds"),
+];
 
 // *********************************************************************
 // Balance.

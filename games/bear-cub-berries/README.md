@@ -34,7 +34,9 @@ Get to day ten and the family sleeps.
 * **1 / 2 / 3** — choose a boon, or pick a title-screen page
 * **M** — hush the sound, **F1** — debug overlay, **R** — restart, **Esc** — quit
 
-Typed cheats, because it is that kind of game: `honey`, `cuddle`, `quota`, `smasher`.
+**F2** opens the cheat sheet: clear the day, jump to the old badger, skip a day,
+an epic boon, treats at your paws, or dusk in six seconds. Typed cheats still work,
+because it is that kind of game: `honey`, `cuddle`, `quota`, `smasher`.
 
 ## What is in here
 
