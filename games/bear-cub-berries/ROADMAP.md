@@ -17,8 +17,7 @@ they are to build.
   a headless model of the day economy: same constants, same spawn cadence, a cub
   with perfect routing. It asserts every day is clearable with room left over and
   that the last day is not trivial. Everything visual is still verified by
-  screenshotting a
-  running window and posting synthetic key events to it.
+  screenshotting a running window and posting synthetic key events to it.
 
 ## What the audit pass changed
 
@@ -121,10 +120,14 @@ enemies, game, helpers) and the sections hold up fine. What does not hold up:
    smooth vector shapes. Either draw pixel enemies to match (best) or deliberately
    restyle the bears' vector fallback rigs and use those everywhere (cheapest).
 
-    That is only possible via honey (worth 2) and hive regrowth. It has never been
-    That is only possible via honey (worth 2) and hive regrowth. It has never been
-    played end to end; treat `WIN_DAY`, `BOSS_DAY`, boss HP and the quota step as
-    unvalidated numbers.
+10. **Balance pass with a real player.** The economy is now measured rather than
+    guessed. The model shuffles 3-carry at 258 px/s against a 7-item field that
+    refills every 0.75 s, and clears day ten's 24 food in 22 s of its 61 s. A human
+    at half that efficiency lands near 45 s, which is the intended squeeze. Day one
+    used to need only 6 food and ended in four seconds of model time — before Mama
+    finished her opening line — so the curve now ramps 10 to 24. Still unplayed by a
+    human, and the boss fight remains the untested part: 8 HP of swipes at 0.4 s
+    cooldown while it bumps you is the number to watch.
 
 ### P2 — polish and delight
 
