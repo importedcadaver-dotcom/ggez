@@ -799,7 +799,7 @@ fn build_den(ctx: &mut Context) -> GameResult<Mesh> {
 }
 
 fn build_decor(ctx: &mut Context) -> GameResult<Mesh> {
-    let mut rng = seeded_rng();
+    let mut rng = Rand32::new(run_seed());
     let (w, h) = WINDOW_SIZE;
     let mut b = MeshBuilder::new();
 
@@ -1095,6 +1095,8 @@ const CHATTER: [&str; 12] = [
 
 struct Game {
     rng: Rand32,
+    /// This run's seed, so a bug can be reported as "seed 1234, day 3".
+    seed: u64,
     size: Vec2,
     clock: f32,
 
@@ -1233,9 +1235,11 @@ impl Game {
         )?;
 
         let sprites = load_bear_sprites(ctx);
+        let seed = run_seed();
 
         let mut game = Game {
-            rng: seeded_rng(),
+            seed,
+            rng: Rand32::new(seed),
             size: vec2(WINDOW_SIZE.0, WINDOW_SIZE.1),
             clock: 0.0,
             cub_rig,
@@ -2542,8 +2546,8 @@ impl Game {
             vec2(left, top + 74.0),
         )?;
 
-        // Ten dots, so the run is legible at a glance.
-        let mut x = left;
+        // Ten dots, up on the tomorrow line so the cheat toast cannot sit on them.
+        let mut x = size.x - 96.0 - (WIN_DAY - 1) as f32 * 16.0;
         for d in 1..=WIN_DAY {
             let on = d <= self.day;
             let next = d == self.day + 1;
@@ -2551,7 +2555,7 @@ impl Game {
             canvas.draw(
                 &self.dot_mesh,
                 DrawParam::new()
-                    .dest(vec2(x, top + 108.0))
+                    .dest(vec2(x, top + 46.0))
                     .scale(vec2(side, side))
                     .color(if on {
                         HONEY_LIGHT
@@ -3536,7 +3540,10 @@ impl Game {
                     draw_centered_label(
                         canvas,
                         ctx,
-                        &format!("best day {}   ·   runs {}", self.best_day, self.runs),
+                        &format!(
+                            "best day {}   ·   runs {}   ·   seed {}",
+                            self.best_day, self.runs, self.seed
+                        ),
                         13.0,
                         Color::new(0.95, 0.90, 0.80, 0.55),
                         mid + vec2(0.0, 316.0),
@@ -3928,12 +3935,28 @@ fn draw_centered_label(
     Ok(())
 }
 
-fn seeded_rng() -> Rand32 {
-    let seed = SystemTime::now()
+/// The run's seed. `cargo run -p bear-cub-berries -- --seed 1234` reproduces a
+/// run exactly; with no argument it still comes from the clock.
+fn run_seed() -> u64 {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        let text = if let Some(rest) = arg.strip_prefix("--seed=") {
+            Some(rest.to_string())
+        } else if arg == "--seed" {
+            args.next()
+        } else {
+            None
+        };
+        if let Some(text) = text {
+            if let Ok(seed) = text.parse::<u64>() {
+                return seed;
+            }
+        }
+    }
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0x5EED_1234_ABCD_0001);
-    Rand32::new(seed)
+        .unwrap_or(0x5EED_1234_ABCD_0001)
 }
 
 fn lerp_color(from: Color, to: Color, t: f32) -> Color {

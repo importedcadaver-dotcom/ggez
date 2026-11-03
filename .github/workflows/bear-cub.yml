@@ -1,0 +1,48 @@
+name: bear cub berries
+
+on:
+  push:
+    paths:
+      - "games/bear-cub-berries/**"
+      - ".github/workflows/bear-cub.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  pull_request:
+    paths:
+      - "games/bear-cub-berries/**"
+      - ".github/workflows/bear-cub.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+
+jobs:
+  game:
+    name: build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      # ggez pulls in audio and gamepad support by default, which need headers.
+      - name: system libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+
+      - name: format
+        run: cargo fmt -p bear-cub-berries -- --check
+
+      - name: build
+        run: cargo build -p bear-cub-berries
+
+      - name: test
+        run: cargo test -p bear-cub-berries
