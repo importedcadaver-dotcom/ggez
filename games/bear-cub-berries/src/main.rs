@@ -51,6 +51,11 @@ const FIRST_QUOTA: u32 = 10;
 const WIN_DAY: u32 = 10;
 /// The old badger comes to settle things on this day.
 const BOSS_DAY: u32 = 5;
+/// Swipes the old badger takes before it gives up.
+const BOSS_HP: i32 = 10;
+/// How long the old badger shrugs off a landed swipe. Heavy, so it comes back
+/// slow: the cub can stay on it, but cannot drum it down.
+const BOSS_RECOVER: f32 = 1.2;
 /// Swipe timing and reach.
 const SWIPE_CD: f32 = 0.40;
 const SWIPE_RANGE: f32 = 66.0;
@@ -1456,7 +1461,7 @@ impl Game {
         if self.day >= BOSS_DAY && !self.boss_down {
             if let Some(b) = self.foes.iter_mut().find(|f| f.kind == FoeKind::Badger) {
                 b.boss = true;
-                b.hp = 8;
+                b.hp = BOSS_HP;
             }
         }
 
@@ -1975,7 +1980,11 @@ impl Game {
                     foe.cooldown = (foe.cooldown - dt).max(0.0);
                     let speed = 164.0 + day * 4.0;
                     if foe.cooldown > 0.0 {
-                        foe.pos -= to_cub.normalize_or_zero() * speed * 1.15 * dt;
+                        // Backing off has to stay slower than the cub. Otherwise a
+                        // landed hit just buys a chase the player cannot win, and
+                        // every swipe costs several seconds of walking.
+                        let flee = (speed * 1.15).min(CUB_SPEED * 0.78);
+                        foe.pos -= to_cub.normalize_or_zero() * flee * dt;
                     } else if dist < 470.0 {
                         foe.pos += to_cub.normalize_or_zero() * speed * dt;
                     } else {
@@ -3255,7 +3264,13 @@ impl Game {
         let mut down: Vec<usize> = Vec::new();
         for i in &strikes {
             self.foes[*i].hp -= 1;
-            self.foes[*i].cooldown = 1.3;
+            // The old badger is too heavy to shove far, so it comes back sooner
+            // than its children do: eight swipes should be a fight, not a siege.
+            self.foes[*i].cooldown = if self.foes[*i].boss {
+                BOSS_RECOVER
+            } else {
+                1.3
+            };
             let push = (self.foes[*i].pos - here).normalize_or_zero() * 44.0;
             self.foes[*i].pos += push;
             let at = self.foes[*i].pos;
@@ -3274,8 +3289,18 @@ impl Game {
     fn bump_kill(&mut self, foe: Foe) {
         if foe.boss {
             self.boss_down = true;
-            self.stored += 4;
-            self.total_food += 4;
+            // The fight has to pay for the time it costs: a full trip of food,
+            // dropped where it fell, plus the den share.
+            self.stored += 6;
+            self.total_food += 6;
+            for i in 0..3 {
+                self.pickups.push(Pickup {
+                    pos: foe.pos + vec2(-20.0 + 20.0 * i as f32, -8.0 + 8.0 * i as f32),
+                    vel: Vec2::ZERO,
+                    kind: Food::Honey,
+                    wobble: 0.0,
+                });
+            }
             self.sfx.request(SFX_DAY_CLEAR);
             self.say_from(
                 "MAMA",
@@ -3286,7 +3311,7 @@ impl Game {
                 4.0,
             );
             self.sparkle(foe.pos, HONEY_LIGHT, 24);
-            self.toast_line("The old badger is gone. +4 stored.");
+            self.toast_line("The old badger is gone. +6 stored, and its honey.");
             self.mama_hop = 1.0;
         } else {
             self.sparkle(foe.pos, BADGER_PALE, 12);
@@ -3692,7 +3717,7 @@ impl Game {
         let Some(boss) = self.foes.iter().find(|f| f.boss) else {
             return Ok(());
         };
-        let full = if boss.hp > 8 { 16.0 } else { 8.0 };
+        let full = BOSS_HP as f32;
         let frac = (boss.hp as f32 / full).clamp(0.0, 1.0);
         let w = 320.0;
         let x = (self.size.x - w) * 0.5;
@@ -4179,5 +4204,96 @@ mod balance {
             );
         }
         println!("{report}");
+    }
+
+    /// A hit has to open a window, not start a chase. Left uncapped the flee
+    /// speed exceeds the cub run, so each of the eight swipes becomes several
+    /// seconds of walking after a badger that is always faster than you.
+    #[test]
+    fn the_old_badger_can_be_caught_between_swipes() {
+        let day = BOSS_DAY as f32;
+        let speed = 164.0 + day * 4.0;
+        let flee = (speed * 1.15).min(CUB_SPEED * 0.78);
+        // Between swipes the badger staggers back. If it backs off faster than
+        // the cub runs, the cub loses ground on every hit and the fight turns
+        // into a chase it cannot win; slower, and the cub walks it down while
+        // the badger is still recovering.
+        assert!(
+            flee < CUB_SPEED * 0.85,
+            "a wounded badger outruns the cub: {flee} vs {CUB_SPEED}"
+        );
+
+        // Each swipe costs the badger its recovery plus whatever it gained in
+        // the retreat, chased at the combined speed. Eight of those still have
+        // to fit beside the quota or the boss is a trap, not a choice.
+        let retreat = BOSS_RECOVER;
+        let lost = (retreat * (flee - CUB_SPEED)).max(0.0);
+        let cycle = retreat + lost / (CUB_SPEED + speed);
+        let fight = cycle * BOSS_HP as f32;
+        let room = day_len(BOSS_DAY) * 0.4;
+        assert!(
+            fight < room,
+            "the fight takes {fight:.1}s of the {room:.1}s a day can spare"
+        );
+        println!("boss fight: {cycle:.2}s per swipe, {fight:.1}s for {BOSS_HP} swipes");
+    }
+
+    /// The duel itself, in a straight line, using the numbers the game runs with:
+    /// the swipe reach, the length of a recovery, the push a hit gives, and the
+    /// badger own chase and retreat. This is how long the fight costs the player,
+    /// so it can be weighed against what the old badger is worth.
+    #[test]
+    fn the_old_badger_duel_pays_for_itself() {
+        let chase = 164.0 + BOSS_DAY as f32 * 4.0;
+        let flee = (chase * 1.15).min(CUB_SPEED * 0.78);
+        let reach = SWIPE_RANGE + FoeKind::Badger.radius() + 16.0;
+        let mut boss = reach * 0.85;
+        let mut hp = BOSS_HP;
+        let mut cooldown = 0.0f32;
+        let mut swipe_cd = 0.0f32;
+        let mut t = 0.0f32;
+        let dt = 1.0 / 60.0;
+
+        while hp > 0 && t < 180.0 {
+            t += dt;
+            swipe_cd = (swipe_cd - dt).max(0.0);
+            cooldown = (cooldown - dt).max(0.0);
+            if swipe_cd <= 0.0 && boss <= reach {
+                hp -= 1;
+                swipe_cd = SWIPE_CD;
+                cooldown = BOSS_RECOVER;
+                boss += 44.0;
+                continue;
+            }
+            // The cub always walks at the badger. The badger backs off while it
+            // recovers and closes the rest of the time, both through the same
+            // speeds the update loop uses.
+            let step = if cooldown > 0.0 { flee } else { -chase };
+            boss = (boss + step * dt - CUB_SPEED * dt).max(0.0);
+        }
+
+        assert_eq!(
+            hp, 0,
+            "the duel never finished: {t:.1}s and {hp} swipes left"
+        );
+        let room = day_len(BOSS_DAY) * 0.35;
+        assert!(
+            t < room,
+            "the duel costs {t:.1}s of the {room:.1}s a day can spare"
+        );
+        // What the kill is worth, against what the same seconds gather. Berries
+        // trade one for one, so the fight has to beat a straight walk.
+        let paid = 6.0 + 3.0;
+        // Berries trade one for one and the day model gathers a little over one
+        // a second, so a fight paying under a food a second is a trap.
+        let rate = paid / t;
+        assert!(
+            rate >= 1.0,
+            "the fight pays {rate:.2} food a second, worse than walking"
+        );
+        println!(
+            "boss duel: {t:.1}s for {BOSS_HP} swipes, {paid:.0} food, {rate:.2} food/s in a {:.0}s day",
+            day_len(BOSS_DAY)
+        );
     }
 }
