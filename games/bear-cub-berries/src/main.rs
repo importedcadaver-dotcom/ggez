@@ -226,6 +226,10 @@ struct Particle {
 struct Speech {
     pos: Vec2,
     text: String,
+    /// Who is talking, or empty for narration.
+    who: &'static str,
+    /// 3 is story, 2 is the cub reacting, 1 is idle chatter.
+    prio: u8,
     life: f32,
     max_life: f32,
     color: Color,
@@ -693,10 +697,11 @@ fn build_decor(ctx: &mut Context) -> GameResult<Mesh> {
     let (w, h) = WINDOW_SIZE;
     let mut b = MeshBuilder::new();
 
+    // Soft patches of lighter grass.
     for _ in 0..8 {
         let pos = [
             50.0 + rng.rand_float() * (w - 100.0),
-            130.0 + rng.rand_float() * (h - 190.0),
+            150.0 + rng.rand_float() * (h - 210.0),
         ];
         b.ellipse(
             DrawMode::fill(),
@@ -708,9 +713,46 @@ fn build_decor(ctx: &mut Context) -> GameResult<Mesh> {
         )?;
     }
 
+    // A ragged treeline down both edges, so the meadow has somewhere to end.
+    for side in 0..2 {
+        for i in 0..4 {
+            let depth = i as f32;
+            let base = 196.0 + depth * 30.0 + rng.rand_float() * 16.0;
+            let x = if side == 0 {
+                20.0 + depth * 46.0 + rng.rand_float() * 22.0
+            } else {
+                w - 20.0 - depth * 46.0 - rng.rand_float() * 22.0
+            };
+            // Never let a canopy reach the day/clock text at the top.
+            let tall = (50.0 + rng.rand_float() * 36.0).min(base - 112.0);
+            let half = 26.0 + rng.rand_float() * 10.0;
+            let dark = Color::new(0.17, 0.31, 0.19, 0.95);
+            b.polygon(
+                DrawMode::fill(),
+                &[[x - half, base], [x, base - tall], [x + half, base]],
+                dark,
+            )?;
+            b.polygon(
+                DrawMode::fill(),
+                &[
+                    [x - half * 0.55, base - tall * 0.35],
+                    [x, base - tall * 1.12],
+                    [x + half * 0.55, base - tall * 0.35],
+                ],
+                LEAF,
+            )?;
+            b.rectangle(
+                DrawMode::fill(),
+                Rect::new(x - 3.0, base - 8.0, 6.0, 22.0),
+                Color::new(0.24, 0.17, 0.12, 1.0),
+            )?;
+        }
+    }
+
+    // Grass tufts.
     for _ in 0..80 {
         let x = 20.0 + rng.rand_float() * (w - 40.0);
-        let y = 140.0 + rng.rand_float() * (h - 175.0);
+        let y = 150.0 + rng.rand_float() * (h - 185.0);
         for blade in 0..3 {
             let lean = (blade as f32 - 1.0) * 3.0;
             b.line(
@@ -724,9 +766,117 @@ fn build_decor(ctx: &mut Context) -> GameResult<Mesh> {
         }
     }
 
+    // Fallen log: a trunk with a cut end, shade and bark ridges.
+    let log_y = h * 0.72;
+    let log_x = w * 0.20;
+    b.ellipse(
+        DrawMode::fill(),
+        [log_x, log_y + 9.0],
+        88.0,
+        8.0,
+        0.1,
+        Color::new(0.0, 0.0, 0.0, 0.14),
+    )?;
+    b.ellipse(
+        DrawMode::fill(),
+        [log_x, log_y],
+        90.0,
+        12.0,
+        0.1,
+        Color::new(0.30, 0.21, 0.15, 1.0),
+    )?;
+    b.ellipse(
+        DrawMode::fill(),
+        [log_x, log_y - 3.0],
+        80.0,
+        7.0,
+        0.1,
+        Color::new(0.38, 0.27, 0.19, 1.0),
+    )?;
+    b.ellipse(
+        DrawMode::fill(),
+        [log_x - 78.0, log_y],
+        13.0,
+        13.0,
+        0.1,
+        Color::new(0.44, 0.32, 0.22, 1.0),
+    )?;
+    b.ellipse(
+        DrawMode::fill(),
+        [log_x - 78.0, log_y],
+        8.0,
+        8.0,
+        0.1,
+        Color::new(0.56, 0.43, 0.29, 1.0),
+    )?;
+    for k in 0..3 {
+        let lx = log_x - 44.0 + k as f32 * 36.0;
+        b.line(
+            &[[lx, log_y - 8.0], [lx + 18.0, log_y - 10.0]],
+            1.6,
+            Color::new(0.20, 0.14, 0.10, 1.0),
+        )?;
+    }
+
+    // Rocks.
+    for (rx, ry, s) in [(w * 0.82, h * 0.34, 1.0_f32), (w * 0.26, h * 0.52, 0.7)] {
+        b.ellipse(
+            DrawMode::fill(),
+            [rx, ry],
+            26.0 * s,
+            15.0 * s,
+            0.1,
+            GRASS_DARK,
+        )?;
+        b.ellipse(
+            DrawMode::fill(),
+            [rx - 3.0 * s, ry - 3.0 * s],
+            19.0 * s,
+            10.0 * s,
+            0.1,
+            Color::new(0.40, 0.45, 0.38, 1.0),
+        )?;
+    }
+
+    // Mushrooms, in twos and threes.
+    for _ in 0..7 {
+        let x = 60.0 + rng.rand_float() * (w - 120.0);
+        let y = 180.0 + rng.rand_float() * (h - 240.0);
+        for m in 0..2 {
+            let mx = x + m as f32 * 13.0;
+            let my = y + (m as f32 * 5.0) - rng.rand_float() * 4.0;
+            b.rectangle(DrawMode::fill(), Rect::new(mx - 1.5, my, 3.0, 7.0), CREAM)?;
+            b.ellipse(
+                DrawMode::fill(),
+                [mx, my],
+                6.0,
+                4.2,
+                0.1,
+                Color::new(0.86, 0.36, 0.30, 1.0),
+            )?;
+            b.circle(DrawMode::fill(), [mx - 1.6, my - 1.0], 1.1, 0.1, CREAM)?;
+        }
+    }
+
+    // Leaf litter.
+    for _ in 0..26 {
+        b.ellipse(
+            DrawMode::fill(),
+            [
+                20.0 + rng.rand_float() * (w - 40.0),
+                170.0 + rng.rand_float() * (h - 210.0),
+            ],
+            3.6,
+            2.0,
+            rng.rand_float(),
+            Color::new(0.62, 0.42, 0.20, 0.55),
+        )?;
+    }
+
+    // Flowers.
     for _ in 0..18 {
         let x = 40.0 + rng.rand_float() * (w - 80.0);
-        let y = 150.0 + rng.rand_float() * (h - 180.0);
+        let y = 160.0 + rng.rand_float() * (h - 190.0);
         let petal = if rng.rand_float() > 0.5 {
             Color::new(0.98, 0.92, 0.60, 0.95)
         } else {
@@ -784,7 +934,7 @@ impl Sfx {
             "/sounds/game_over.wav",
             "/sounds/win.wav",
         ];
-        let data = FILES
+        let data: Vec<Option<audio::SoundData>> = FILES
             .iter()
             .map(|path| audio::SoundData::new(ctx, path).ok())
             .collect();
@@ -1103,7 +1253,14 @@ impl Game {
         self.build_meadow();
 
         let aside = self.day_intro();
-        self.say(self.den_center() + vec2(-104.0, -78.0), aside, CREAM, 4.5);
+        self.say_from(
+            "MAMA",
+            3,
+            self.den_center() + vec2(-104.0, -78.0),
+            aside,
+            CREAM,
+            4.5,
+        );
     }
 
     /// Escalation: every day adds a little more trouble.
@@ -1298,9 +1455,49 @@ impl Game {
     // ---- Speech and sparkles --------------------------------------
 
     fn say(&mut self, pos: Vec2, text: impl Into<String>, color: Color, seconds: f32) {
+        self.say_from("", 1, pos, text, color, seconds);
+    }
+
+    /// Every bubble goes through here. Chatter never piles up on itself, a story
+    /// line always gets through, and two lines from the same bear are stacked so
+    /// they cannot overlap.
+    fn say_from(
+        &mut self,
+        who: &'static str,
+        prio: u8,
+        pos: Vec2,
+        text: impl Into<String>,
+        color: Color,
+        seconds: f32,
+    ) {
+        let nearby = self
+            .speech
+            .iter()
+            .filter(|s| (s.pos.x - pos.x).abs() < 260.0)
+            .count();
+        if prio < 3 && nearby >= 2 {
+            return;
+        }
+        // A story line clears the small talk it would otherwise talk over.
+        if prio >= 3 {
+            self.speech.retain(|s| s.prio >= 3);
+        }
+        let mut at = pos;
+        while self
+            .speech
+            .iter()
+            .any(|s| (s.pos.x - at.x).abs() < 210.0 && (s.pos.y - at.y).abs() < 46.0)
+        {
+            at.y -= 46.0;
+            if at.y < 124.0 {
+                break;
+            }
+        }
         self.speech.push(Speech {
-            pos,
+            pos: at,
             text: text.into(),
+            who,
+            prio,
             life: seconds,
             max_life: seconds,
             color,
@@ -1432,7 +1629,9 @@ impl Game {
         self.cub += self.cub_vel * dt;
         let r = CUB_RADIUS;
         self.cub.x = self.cub.x.clamp(r, self.size.x - r);
-        self.cub.y = self.cub.y.clamp(92.0, self.size.y - r);
+        // The den mouth is not a doorway to walk into: stop at the mound's lip.
+        let top = DEN_Y + 64.0;
+        self.cub.y = self.cub.y.clamp(top, self.size.y - r);
 
         // Blinking, because a cub that never blinks is unsettling.
         self.blink_timer -= dt;
@@ -1546,14 +1745,18 @@ impl Game {
             self.pip_wiggle = 0.9;
             self.sparkle(den + vec2(0.0, 12.0), HONEY_LIGHT, 10);
             if honey_in_load > 0 {
-                self.say(
+                self.say_from(
+                    "PIP",
+                    3,
                     den + vec2(78.0, -30.0),
                     "Honey! My cough... thank you, big cub.",
                     HONEY_LIGHT,
                     3.0,
                 );
             } else if self.rng.rand_float() > 0.5 {
-                self.say(
+                self.say_from(
+                    "MAMA",
+                    2,
                     den + vec2(-104.0, -78.0),
                     "Ha! Into the store with it.",
                     CREAM,
@@ -1566,7 +1769,9 @@ impl Game {
                 for _ in 0..3 {
                     self.sparkle(den + vec2(0.0, 6.0), CREAM, 10);
                 }
-                self.say(
+                self.say_from(
+                    "MAMA",
+                    3,
                     self.den_center() + vec2(-104.0, -78.0),
                     self.day_clear_line(),
                     CREAM,
@@ -1819,6 +2024,15 @@ impl Game {
                 .color(GRASS),
         );
         canvas.draw(&self.decor_mesh, DrawParam::new());
+
+        // The light goes colder as the snow gets closer.
+        let cold = ((self.day - 1) as f32 / WIN_DAY as f32).clamp(0.0, 1.0);
+        canvas.draw(
+            &graphics::Quad,
+            DrawParam::new()
+                .dest_rect(Rect::new(0.0, 0.0, size.x, size.y))
+                .color(Color::new(0.52, 0.66, 0.88, 0.05 + 0.13 * cold)),
+        );
 
         // The den glows a little warmer once it is full enough. This is drawn
         // under the mound, so the mouth of the den stays a dark hole.
@@ -2073,10 +2287,27 @@ impl Game {
             );
         }
 
+        // ---- Snow, once the season turns ----
+        if self.day >= 6 {
+            let count = 34;
+            for i in 0..count {
+                let seed = i as f32 * 37.0;
+                let x = (seed * 13.0 + self.clock * 16.0) % size.x;
+                let y = (seed * 29.0 + self.clock * 26.0) % size.y;
+                canvas.draw(
+                    &self.dot_mesh,
+                    DrawParam::new()
+                        .dest(vec2(x, y))
+                        .scale(vec2(2.0, 2.0))
+                        .color(Color::new(1.0, 1.0, 1.0, 0.45)),
+                );
+            }
+        }
+
         // ---- Speech bubbles ----
         for s in self.speech.iter().filter(|_| self.phase == Phase::Playing) {
             let fade = (s.life / s.max_life).clamp(0.0, 1.0).min(s.life * 3.0);
-            self.draw_bubble(&mut canvas, ctx, s.pos, &s.text, s.color, fade)?;
+            self.draw_bubble(&mut canvas, ctx, s.pos, &s.text, s.who, s.color, fade)?;
         }
 
         // ---- HUD ----
@@ -2116,14 +2347,20 @@ impl Game {
         ctx: &Context,
         at: Vec2,
         text: &str,
+        who: &str,
         color: Color,
         fade: f32,
     ) -> GameResult {
+        // An overhead bubble holds two or three short lines; anything longer
+        // belongs in a story panel. ~30 characters a line, hard wrapped.
         let mut label = make_label(text, 15.0);
-        label.set_wrap(false);
+        label.set_wrap(true);
+        label.set_bounds(vec2(392.0, 108.0));
         let dims = label.measure(ctx)?;
+        label.set_bounds(vec2(dims.x + 1.0, dims.y + 1.0));
+        let name_h = if who.is_empty() { 0.0 } else { 16.0 };
         let w = dims.x + 22.0;
-        let h = dims.y + 14.0;
+        let h = dims.y + 16.0 + name_h;
         // Keep bubbles on screen: a line said over the den must not spill off the top.
         let x = (at.x - w * 0.5).clamp(8.0, (self.size.x - w - 8.0).max(8.0));
         let y = (at.y - h).clamp(92.0, (self.size.y - h - 12.0).max(92.0));
@@ -2132,7 +2369,7 @@ impl Game {
             &graphics::Quad,
             DrawParam::new()
                 .dest_rect(rect)
-                .color(Color::new(0.10, 0.08, 0.06, 0.74 * fade)),
+                .color(Color::new(0.09, 0.07, 0.06, 0.84 * fade)),
         );
         canvas.draw(
             &graphics::Quad,
@@ -2140,10 +2377,19 @@ impl Game {
                 .dest_rect(Rect::new(rect.x, rect.y, 3.0, h))
                 .color(Color::new(color.r, color.g, color.b, 0.9 * fade)),
         );
+        if !who.is_empty() {
+            draw_label(
+                canvas,
+                who,
+                10.0,
+                Color::new(color.r, color.g, color.b, 0.85 * fade),
+                vec2(rect.x + 11.0, rect.y + 4.0),
+            )?;
+        }
         canvas.draw(
             &label,
             DrawParam::new()
-                .dest(vec2(rect.x + 11.0, rect.y + 7.0))
+                .dest(vec2(rect.x + 11.0, rect.y + 6.0 + name_h))
                 .color(Color::new(color.r, color.g, color.b, fade)),
         );
         Ok(())
@@ -2721,7 +2967,9 @@ impl Game {
             self.stored += 4;
             self.total_food += 4;
             self.sfx.request(SFX_DAY_CLEAR);
-            self.say(
+            self.say_from(
+                "MAMA",
+                3,
                 self.den_center() + vec2(-104.0, -78.0),
                 "The old badger will not come back. Not this winter.",
                 CREAM,
@@ -2800,7 +3048,9 @@ impl Game {
             boss: true,
         });
         self.toast_line("easter egg: something chrome is coming out of the treeline");
-        self.say(
+        self.say_from(
+            "???",
+            3,
             self.den_center() + vec2(0.0, -84.0),
             "Wake up, cub. We have a den to take.",
             Color::new(0.86, 0.92, 1.0, 1.0),
@@ -2883,7 +3133,14 @@ impl Game {
             &graphics::Quad,
             DrawParam::new()
                 .dest_rect(Rect::new(0.0, 0.0, size.x, size.y))
-                .color(Color::new(0.05, 0.08, 0.06, 0.74)),
+                .color(Color::new(0.04, 0.07, 0.05, 0.90)),
+        );
+        // A plate behind the menu, so the cub and the meadow stay scenery.
+        canvas.draw(
+            &graphics::Quad,
+            DrawParam::new()
+                .dest_rect(Rect::new(size.x * 0.24, 186.0, size.x * 0.52, 158.0))
+                .color(Color::new(0.04, 0.07, 0.05, 0.72)),
         );
         let mid = vec2(size.x * 0.5, 0.0);
 
@@ -2893,7 +3150,7 @@ impl Game {
             "BEAR CUB BERRIES",
             54.0,
             HONEY_LIGHT,
-            mid + vec2(0.0, 92.0),
+            mid + vec2(0.0, 84.0),
         )?;
         draw_centered_label(
             canvas,
@@ -2901,7 +3158,7 @@ impl Game {
             "a small roguelite about a very small bear",
             17.0,
             CREAM,
-            mid + vec2(0.0, 134.0),
+            mid + vec2(0.0, 126.0),
         )?;
 
         match self.title_page {
@@ -2912,16 +3169,26 @@ impl Game {
                     "SPACE  begin the winter",
                     22.0,
                     SUNSET,
-                    mid + vec2(0.0, 236.0),
+                    mid + vec2(0.0, 232.0),
                 )?;
                 draw_centered_label(
                     canvas,
                     ctx,
                     "2  credits        3  cheats & controls",
                     15.0,
-                    Color::new(0.92, 0.92, 0.86, 0.70),
-                    mid + vec2(0.0, 280.0),
+                    Color::new(0.92, 0.92, 0.86, 0.72),
+                    mid + vec2(0.0, 284.0),
                 )?;
+                if self.runs > 1 || self.best_day > 0 {
+                    draw_centered_label(
+                        canvas,
+                        ctx,
+                        &format!("best day {}   ·   runs {}", self.best_day, self.runs),
+                        13.0,
+                        Color::new(0.95, 0.90, 0.80, 0.55),
+                        mid + vec2(0.0, 316.0),
+                    )?;
+                }
             }
             1 => {
                 for (i, line) in [
@@ -2937,9 +3204,9 @@ impl Game {
                         canvas,
                         ctx,
                         line,
-                        16.0,
+                        15.0,
                         if i == 0 { HONEY_LIGHT } else { CREAM },
-                        mid + vec2(0.0, 220.0 + i as f32 * 34.0),
+                        mid + vec2(0.0, 210.0 + i as f32 * 30.0),
                     )?;
                 }
                 draw_centered_label(
@@ -2948,7 +3215,7 @@ impl Game {
                     "1  back",
                     15.0,
                     Color::new(0.92, 0.92, 0.86, 0.70),
-                    mid + vec2(0.0, 380.0),
+                    mid + vec2(0.0, 356.0),
                 )?;
             }
             _ => {
@@ -2969,7 +3236,7 @@ impl Game {
                         line,
                         15.0,
                         if i == 5 { HONEY_LIGHT } else { CREAM },
-                        mid + vec2(0.0, 210.0 + i as f32 * 32.0),
+                        mid + vec2(0.0, 206.0 + i as f32 * 30.0),
                     )?;
                 }
                 draw_centered_label(
@@ -2978,7 +3245,7 @@ impl Game {
                     "1  back",
                     15.0,
                     Color::new(0.92, 0.92, 0.86, 0.70),
-                    mid + vec2(0.0, 420.0),
+                    mid + vec2(0.0, 396.0),
                 )?;
             }
         }
@@ -2994,57 +3261,66 @@ impl Game {
             &graphics::Quad,
             DrawParam::new()
                 .dest_rect(Rect::new(0.0, 0.0, size.x, size.y))
-                .color(Color::new(0.04, 0.05, 0.05, 0.72)),
+                .color(Color::new(0.04, 0.05, 0.05, 0.78)),
         );
         // Letterbox, because this is a story now.
         canvas.draw(
             &graphics::Quad,
             DrawParam::new()
                 .dest_rect(Rect::new(0.0, 0.0, size.x, 64.0))
-                .color(Color::new(0.02, 0.02, 0.02, 0.92)),
+                .color(Color::new(0.02, 0.02, 0.02, 0.94)),
         );
         canvas.draw(
             &graphics::Quad,
             DrawParam::new()
                 .dest_rect(Rect::new(0.0, size.y - 58.0, size.x, 58.0))
-                .color(Color::new(0.02, 0.02, 0.02, 0.92)),
+                .color(Color::new(0.02, 0.02, 0.02, 0.94)),
         );
 
-        draw_label(
-            canvas,
-            panel.who,
-            20.0,
-            panel.tint,
-            vec2(size.x * 0.5 - 250.0, size.y * 0.30),
-        )?;
+        // Text column: 60 px margins, hard wrap, left aligned. Never past 80ch.
+        let left = 96.0;
+        let width = size.x - left * 2.0;
+        let top = size.y * 0.46;
+
+        draw_label(canvas, panel.who, 20.0, panel.tint, vec2(left, top))?;
         canvas.draw(
             &graphics::Quad,
             DrawParam::new()
-                .dest_rect(Rect::new(
-                    size.x * 0.5 - 250.0,
-                    size.y * 0.30 + 30.0,
-                    60.0,
-                    2.0,
-                ))
+                .dest_rect(Rect::new(left, top + 28.0, 56.0, 2.0))
                 .color(panel.tint),
         );
 
         let mut body = make_label(panel.line, 19.0);
         body.set_wrap(true);
-        body.set_bounds(vec2(size.x - 260.0, 260.0));
+        body.set_bounds(vec2(width, 280.0));
         canvas.draw(
             &body,
             DrawParam::new()
-                .dest(vec2(size.x * 0.5 - 250.0, size.y * 0.30 + 48.0))
+                .dest(vec2(left, top + 46.0))
                 .color(panel.tint),
         );
 
+        // Progress dots, so the pace of the scene is visible at a glance.
+        let dots = self.cut.len().min(12) as f32;
+        let gap = 12.0;
+        let mut x = size.x * 0.5 - (dots - 1.0) * gap * 0.5;
+        for i in 0..self.cut.len().min(12) {
+            let on = i == self.cut_i;
+            canvas.draw(
+                &self.dot_mesh,
+                DrawParam::new()
+                    .dest(vec2(x, size.y - 34.0))
+                    .scale(vec2(if on { 4.5 } else { 3.5 }, if on { 4.5 } else { 3.5 }))
+                    .color(Color::new(0.96, 0.92, 0.84, if on { 1.0 } else { 0.45 })),
+            );
+            x += gap;
+        }
         draw_label_right(
             canvas,
             ctx,
-            &format!("{}/{}   SPACE", self.cut_i + 1, self.cut.len()),
-            14.0,
-            Color::new(0.90, 0.88, 0.82, 0.72),
+            "SPACE",
+            13.0,
+            Color::new(0.90, 0.88, 0.82, 0.7),
             vec2(size.x - 40.0, size.y - 34.0),
         )?;
         Ok(())
@@ -3082,7 +3358,7 @@ impl Game {
         Ok(())
     }
 
-    fn draw_debug(&self, canvas: &mut graphics::Canvas, _ctx: &Context) -> GameResult {
+    fn draw_debug(&self, canvas: &mut graphics::Canvas, ctx: &Context) -> GameResult {
         let phase = match self.phase {
             Phase::Title => "title",
             Phase::Cutscene => "cutscene",
@@ -3091,6 +3367,11 @@ impl Game {
             Phase::RunOver => "over",
         };
         let lines = [
+            format!(
+                "fps {:.0}  frame {:.1}ms",
+                ctx.time.fps(),
+                ctx.time.delta().as_secs_f64() * 1000.0
+            ),
             format!("phase {phase}  day {}  {}s", self.day, self.day_time as i32),
             format!(
                 "cub {:.0},{:.0}  carried {}  stored {}/{}",
@@ -3114,7 +3395,7 @@ impl Game {
                 line,
                 12.0,
                 Color::new(1.0, 1.0, 0.7, 0.9),
-                vec2(18.0, self.size.y - 96.0 + i as f32 * 16.0),
+                vec2(18.0, self.size.y - 152.0 + i as f32 * 15.0),
             )?;
         }
         Ok(())

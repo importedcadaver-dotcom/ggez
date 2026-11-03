@@ -16,6 +16,29 @@ they are to build.
 * **Tests:** none. Everything verified so far was verified by screenshotting a
   running window and posting synthetic key events to it.
 
+## What the audit pass changed
+
+A pass over dialogue, framing, environment and the frame budget. Measured, not
+guessed: at 1045x700 in a debug build the game holds 144 fps / ~6.8 ms per frame,
+which is the vsync cap, so there is no headroom left to measure on this machine
+and no optimising claim is being made here. What was actually broken and is now
+fixed:
+
+* **Dialogue had no owner.** Lines collided, stacked on the HUD and never said who
+  was speaking. All speech now goes through one arbiter: a speaker name, a priority,
+  a drop rule when two bubbles are already up, a stack offset so two lines cannot
+  overlap, and hard wrapping. Story lines clear the small talk under them.
+* **The treeline grew into the readouts.** Canopies are now clamped below the day
+  and clock text, which were previously illegible against dark green.
+* **The meadow was three ellipses and a rectangle.** It now has an edge treeline on
+  both sides, a fallen trunk with a cut end and bark ridges, rocks, mushrooms, leaf
+  litter, a cold seasonal light grade past day five, and snow from day six.
+* **The title had no plate.** Menu text sat directly on the den and the cub; it now
+  sits on a panel over a darkened meadow, with a best-day readout.
+* **Cutscenes were text on a dimmed map.** They now letterbox, label the speaker,
+  and show progress dots. Remaining: skip-on-hold and a drawn image per beat.
+* **No frame readout.** F1 now prints fps and frame time alongside the rest.
+
 ## Architecture: the honest version
 
 The file is organised in sections (tuning, palette, structures, boons, rig,
@@ -107,7 +130,7 @@ enemies, game, helpers) and the sections hold up fine. What does not hold up:
     with a longer walk, better food, and worse animals would give the run shape.
 13. **Persistent scars.** Injuries already persist within a run; letting a bad day
     leave a visible mark on the cub across runs is cheap and thematically right.
-14. **Cutscene polish.** The panels are text on a dimmed meadow. A held key to skip,
+14. **Cutscene polish.** Letterboxing, speaker labels and progress dots are in. A held key to skip,
     a slow text reveal, and a drawn illustration per beat would sell it.
 15. **Settings file.** Volume, mute, fullscreen, and whether the intro plays.
 16. **Accessibility.** Remappable keys, a high-contrast palette option, and a
