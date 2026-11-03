@@ -1315,7 +1315,9 @@ impl Game {
             title_page: 0,
             treat_mesh: build_treat(ctx)?,
         };
+        // Building the backdrop for the title is not a run the player took.
         game.start_run();
+        game.runs = 0;
         game.phase = Phase::Title;
         Ok(game)
     }
@@ -3732,7 +3734,10 @@ impl Game {
                 ctx.time.fps(),
                 ctx.time.delta().as_secs_f64() * 1000.0
             ),
-            format!("phase {phase}  day {}  {}s", self.day, self.day_time as i32),
+            format!(
+                "phase {phase}  day {}  {}s  seed {}",
+                self.day, self.day_time as i32, self.seed
+            ),
             format!(
                 "cub {:.0},{:.0}  carried {}  stored {}/{}",
                 self.cub.x,
