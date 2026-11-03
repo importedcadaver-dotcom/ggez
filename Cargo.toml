@@ -71,7 +71,7 @@ skeptic = { git = "https://github.com/Erk-/rust-skeptic.git", branch = "fix-rust
 getrandom = "0.4"
 
 [workspace]
-members = ["doc_tests"]
+members = ["doc_tests", "games/bear-cub-berries"]
 
 [[example]]
 name = "3d"

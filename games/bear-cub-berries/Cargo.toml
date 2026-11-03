@@ -1,0 +1,15 @@
+[package]
+name = "bear-cub-berries"
+description = "A small roguelite about a very small bear, built on ggez."
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "bear-cub-berries"
+path = "src/main.rs"
+
+[dependencies]
+ggez = { path = "../.." }
+oorandom = "11"
